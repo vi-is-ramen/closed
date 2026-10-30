@@ -1,0 +1,13 @@
+[package]
+name = "closed-proc-macros"
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.85"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "3.0.9", features = ["full"] }
+quote = "1"
+proc-macro2 = "1"
