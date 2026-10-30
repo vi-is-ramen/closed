@@ -43,9 +43,7 @@ pub trait Callable<Args> {
 }
 
 pub trait IntoAsyncFn<Args, Output> {
-    fn into_async_function(
-        self,
-    ) -> crate::Function<Args, crate::Future<Output>>;
+    fn into_asyncfn(self) -> crate::Function<Args, crate::Future<Output>>;
 }
 
 impl<F, Fut, Args, Output: 'static> IntoAsyncFn<Args, Output> for F
@@ -53,9 +51,20 @@ where
     F: Callable<Args, Output = Fut> + Send + Sync + 'static,
     Fut: core::future::Future<Output = Output> + Send + 'static,
 {
-    fn into_async_function(
-        self,
-    ) -> crate::Function<Args, crate::Future<Output>> {
+    fn into_asyncfn(self) -> crate::Function<Args, crate::Future<Output>> {
         crate::Function::new_async(self)
+    }
+}
+
+pub trait IntoFn<Args, Output> {
+    fn into_fn(self) -> crate::Function<Args, Output>;
+}
+
+impl<F, Args, Output: 'static> IntoFn<Args, Output> for F
+where
+    F: Callable<Args, Output = Output> + Send + Sync + 'static,
+{
+    fn into_fn(self) -> crate::Function<Args, Output> {
+        crate::Function::new(self)
     }
 }
