@@ -3,6 +3,8 @@ name = "closed-proc-macros"
 version = "0.0.1"
 edition = "2024"
 rust-version = "1.85"
+description = "Internal procedural macros for the `closed` crate."
+license = "MIT OR Apache-2.0"
 
 [lib]
 proc-macro = true
