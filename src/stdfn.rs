@@ -9,6 +9,33 @@ use crate::traits::{
 use crate::types::{Callable, CallableMut, CallableOnce, Future};
 use alloc::{boxed::Box, sync::Arc};
 
+#[cfg(all(feature = "spectre", target_arch = "x86_64"))]
+#[inline(always)]
+fn spectre_barrier() {
+    unsafe {
+        core::arch::x86_64::_mm_lfence();
+    }
+}
+
+#[cfg(all(feature = "spectre", target_arch = "aarch64"))]
+#[inline(always)]
+fn spectre_barrier() {
+    unsafe {
+        core::arch::asm!("csdb", options(nomem, nostack, preserves_flags));
+    }
+}
+
+#[cfg(all(
+    feature = "spectre",
+    not(any(target_arch = "x86_64", target_arch = "aarch64"))
+))]
+#[inline(always)]
+fn spectre_barrier() {
+    // Fallback: prevent both compiler and CPU to reorder operations.
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+    core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+}
+
 macro_rules! impl_arity {
     ($($arg:ident),*) => {
         // 1. Map tuples to `dyn Fn*` types.
@@ -111,6 +138,30 @@ macro_rules! impl_arity {
             pub fn call(&self, $($arg: $arg),*) -> Output {
                 (self.inner)($($arg),*)
             }
+
+            /// Spectre-mitigated call with a tuple of arguments.
+            /// Expensive (~40+ CPU ticks on amd64/arm), only available with the
+            /// `spectre` feature. Assumes the callee is trusted.
+            #[cfg(feature = "spectre")]
+            #[inline(always)]
+            pub fn spoke(&self, ($($arg,)*): ($($arg,)*)) -> Output {
+                spectre_barrier();
+                let rv = (self.inner)($($arg),*);
+                spectre_barrier();
+                rv
+            }
+
+            /// Spectre-mitigated call with individual arguments.
+            /// Expensive (~40+ CPU ticks on amd64/arm), only available with the
+            /// `spectre` feature. Assumes the callee is trusted.
+            #[cfg(feature = "spectre")]
+            #[inline(always)]
+            pub fn spall(&self, $($arg: $arg),*) -> Output {
+                spectre_barrier();
+                let res = (self.inner)($($arg),*);
+                spectre_barrier();
+                res
+            }
         }
 
         // 9. CallableMut
@@ -126,6 +177,30 @@ macro_rules! impl_arity {
             pub fn call_mut(&mut self, $($arg: $arg),*) -> Output {
                 (self.inner)($($arg),*)
             }
+
+            /// Spectre-mitigated call with a tuple of arguments.
+            /// Expensive (~40+ CPU ticks on amd64/arm), only available with the
+            /// `spectre` feature. Assumes the callee is trusted.
+            #[cfg(feature = "spectre")]
+            #[inline(always)]
+            pub fn spoke_mut(&mut self, ($($arg,)*): ($($arg,)*)) -> Output {
+                spectre_barrier();
+                let rv = (self.inner)($($arg),*);
+                spectre_barrier();
+                rv
+            }
+
+            /// Spectre-mitigated call with individual arguments.
+            /// Expensive (~40+ CPU ticks on amd64/arm), only available with the
+            /// `spectre` feature. Assumes the callee is trusted.
+            #[cfg(feature = "spectre")]
+            #[inline(always)]
+            pub fn spall_mut(&mut self, $($arg: $arg),*) -> Output {
+                spectre_barrier();
+                let res = (self.inner)($($arg),*);
+                spectre_barrier();
+                res
+            }
         }
 
         // 10. CallableOnce
@@ -140,6 +215,30 @@ macro_rules! impl_arity {
             #[inline(always)]
             pub fn call_once(self, $($arg: $arg),*) -> Output {
                 (self.inner)($($arg),*)
+            }
+
+            /// Spectre-mitigated call with a tuple of arguments.
+            /// Expensive (~40+ CPU ticks on amd64/arm), only available with the
+            /// `spectre` feature. Assumes the callee is trusted.
+            #[cfg(feature = "spectre")]
+            #[inline(always)]
+            pub fn spoke_once(self, ($($arg,)*): ($($arg,)*)) -> Output {
+                spectre_barrier();
+                let rv = (self.inner)($($arg),*);
+                spectre_barrier();
+                rv
+            }
+
+            /// Spectre-mitigated call with individual arguments.
+            /// Expensive (~40+ CPU ticks on amd64/arm), only available with the
+            /// `spectre` feature. Assumes the callee is trusted.
+            #[cfg(feature = "spectre")]
+            #[inline(always)]
+            pub fn spall_once(self, $($arg: $arg),*) -> Output {
+                spectre_barrier();
+                let res = (self.inner)($($arg),*);
+                spectre_barrier();
+                res
             }
         }
     };

@@ -116,13 +116,13 @@ fn bench_mut_and_once_invoke(c: &mut Criterion) {
     });
     group.bench_function("box_mut", |b| b.iter(|| black_box(box_mut())));
 
-    group.bench_function("closed_once_alloc_and_call", |b| {
+    group.bench_function("closed_once_zst_construct_and_call", |b| {
         b.iter(|| {
             let c = CallableOnce::<(), i32>::new(|| 42);
             black_box(c.invoke_once(()))
         })
     });
-    group.bench_function("box_once_alloc_and_call", |b| {
+    group.bench_function("box_once_zst_construct_and_call", |b| {
         b.iter(|| {
             let b: Box<dyn FnOnce() -> i32 + Send> = Box::new(|| 42);
             black_box(b())

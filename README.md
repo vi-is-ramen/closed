@@ -22,13 +22,14 @@ stored in struct fields:
 *   `Box<dyn Fn(A) -> R>` is not `Clone`.
 *   `Box<dyn Fn(A) -> R>` cannot easily represent asynchronous callables.
 *   Making your struct generic over `F` spreads like a virus through your API.
-*   Using a custom `Callable` trait for type erasure causes LLVM to spill
-    arguments to the stack during indirect calls.
+*   Using a custom (without `extern "rust-call"` \*) `Callable` trait for type
+    erasure forces \*\*\* LLVM to spill arguments to the stack during indirect
+    calls.
 
 `closed` solves this by using Rust's built-in `Fn` traits under the hood via a
 specialized tuple mapping. Because the final indirect call uses
 `extern "rust-call"`, LLVM keeps the arguments in CPU registers (no stack
-spilling).
+spilling) when possible. This way, `Callable` is zero-cost abstraction.
 
 ## The Three Flavors
 
@@ -123,7 +124,8 @@ the same punctuation cost that `Fn` imposes on generic code.
 
 ## Features
 
-*   **Zero-cost type erasure.** No stack spilling of arguments.
+*   **Zero-cost type erasure.** Absolute performance parity with manual
+    `Box/Arc<dyn Fn...>`.
 *   **`Clone` via `Arc`.** Cloning a `Callable` is a single atomic increment.
 *   **Async support.** `new_async` boxes any `impl Future` into
     `Pin<Box<dyn Future + Send>>`.
@@ -131,6 +133,10 @@ the same punctuation cost that `Fn` imposes on generic code.
 *   **`no_std` compatible.** Disable the `std` feature; `alloc` is required.
 *   **Stable Rust.** Works perfectly on stable (with optional nightly features
     for the never type).
+*   **Spectre v1 mitigation.** With feature `spectre` enabled, `spoke` and
+    `spall` methods have appeared. They are semantic twins of `invoke` and
+    `call` but contain speculation barriers. Feature `spectre` is off by
+    default. Mitigation overhead is abt. 40 CPU ticks \*\* per call.
 
 ## `no_std`
 
@@ -149,3 +155,14 @@ Rust **1.85** (Edition 2024).
 
 Dual-licensed under [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) or
 [MIT](https://opensource.org/licenses/MIT), at your option.
+
+---
+
+\* `rust-call` available on nightly channel only. `closed` never writes
+`extern "rust-call"` explicitly — it uses `dyn Fn(...)`, whose calls the
+compiler lowers to rust-call ABI internally. That lowering is stable.
+
+\*\* Number got from Intel and AMD documentation. There are no benchmarks
+proving it.
+
+\*\*\* Checked with [Godbolt](https://godbolt.org/z/Ed7zbvGvf).

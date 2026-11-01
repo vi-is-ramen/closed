@@ -1,6 +1,6 @@
 [package]
 name = "closed"
-version = "0.0.2-2"
+version = "0.0.2"
 edition = "2024"
 rust-version = "1.85"
 description = "Type-erased callable objects for Rust"
@@ -11,12 +11,10 @@ homepage = "https://github.com/vi-is-ramen/suv"
 keywords = ["callable", "function", "type-erasure", "std-function", "closure"]
 categories = ["rust-patterns", "no-std", "asynchronous"]
 
-[build-dependencies]
-rustversion = "1.0"
-
 [features]
 default = ["std"]
 std = []
+spectre = []
 
 [dev-dependencies]
 tokio = { version = "1.54.1", features = ["full"] }
