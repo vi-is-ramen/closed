@@ -95,31 +95,50 @@ macro_rules! impl_arity {
             }
         }
 
-        // --- Invoke methods ---
+        // --- Invoke and Call methods ---
 
         // 8. Callable
         impl<$($arg: 'static,)* Output: 'static> Callable<($($arg,)*), Output> {
-            /// Invokes the underlying callable with the given argument tuple.
-            #[allow(non_snake_case)]
+            /// Invokes the callable with a tuple of arguments.
+            /// This is useful for generic contexts where arguments are stored in a tuple.
+            #[inline(always)]
             pub fn invoke(&self, ($($arg,)*): ($($arg,)*)) -> Output {
+                (self.inner)($($arg),*)
+            }
+
+            /// Invokes the callable with individual arguments.
+            #[inline(always)]
+            pub fn call(&self, $($arg: $arg),*) -> Output {
                 (self.inner)($($arg),*)
             }
         }
 
         // 9. CallableMut
         impl<$($arg: 'static,)* Output: 'static> CallableMut<($($arg,)*), Output> {
-            /// Invokes the underlying callable, mutating its state.
-            #[allow(non_snake_case)]
+            /// Invokes the callable with a tuple of arguments, mutating its state.
+            #[inline(always)]
             pub fn invoke_mut(&mut self, ($($arg,)*): ($($arg,)*)) -> Output {
+                (self.inner)($($arg),*)
+            }
+
+            /// Invokes the callable with individual arguments, mutating its state.
+            #[inline(always)]
+            pub fn call_mut(&mut self, $($arg: $arg),*) -> Output {
                 (self.inner)($($arg),*)
             }
         }
 
         // 10. CallableOnce
         impl<$($arg: 'static,)* Output: 'static> CallableOnce<($($arg,)*), Output> {
-            /// Invokes the underlying callable, consuming it.
-            #[allow(non_snake_case)]
+            /// Invokes the callable with a tuple of arguments, consuming it.
+            #[inline(always)]
             pub fn invoke_once(self, ($($arg,)*): ($($arg,)*)) -> Output {
+                (self.inner)($($arg),*)
+            }
+
+            /// Invokes the callable with individual arguments, consuming it.
+            #[inline(always)]
+            pub fn call_once(self, $($arg: $arg),*) -> Output {
                 (self.inner)($($arg),*)
             }
         }
