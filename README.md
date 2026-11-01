@@ -37,9 +37,9 @@ Mirroring Rust's standard library, `closed` provides three distinct types:
 
 | `closed` | Standard Library | Clone | Invocation |
 | :--- | :--- | :--- | :--- |
-| `Callable` | `Fn` | Yes | `.invoke(args)` |
-| `CallableMut` | `FnMut` | No | `.invoke_mut(args)` |
-| `CallableOnce`| `FnOnce` | No | `.invoke_once(args)`|
+| `Callable` | `Fn` | Yes | `.invoke((arg1, arg2))` / `.call(arg1, arg2)` |
+| `CallableMut` | `FnMut` | No | `.invoke_mut((arg1, arg2))` / `.call_mut(arg1, arg2)` |
+| `CallableOnce`| `FnOnce` | No | `.invoke_once((arg1, arg2))` / `.call_once(arg1, arg2)` |
 
 - **`Callable`** is thread-safe (`Send + Sync`) and cheaply cloneable.
 - **`CallableMut`** allows capturing mutable state.
@@ -133,10 +133,6 @@ the same punctuation cost that `Fn` imposes on generic code.
 *   **`no_std` compatible.** Disable the `std` feature; `alloc` is required.
 *   **Stable Rust.** Works perfectly on stable (with optional nightly features
     for the never type).
-*   **Spectre v1 mitigation.** With feature `spectre` enabled, `spoke` and
-    `spall` methods have appeared. They are semantic twins of `invoke` and
-    `call` but contain speculation barriers. Feature `spectre` is off by
-    default. Mitigation overhead is abt. 40 CPU ticks \*\* per call.
 
 ## `no_std`
 
@@ -161,8 +157,5 @@ Dual-licensed under [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) or
 \* `rust-call` available on nightly channel only. `closed` never writes
 `extern "rust-call"` explicitly — it uses `dyn Fn(...)`, whose calls the
 compiler lowers to rust-call ABI internally. That lowering is stable.
-
-\*\* Number got from Intel and AMD documentation. There are no benchmarks
-proving it.
 
 \*\*\* Checked with [Godbolt](https://godbolt.org/z/Ed7zbvGvf).

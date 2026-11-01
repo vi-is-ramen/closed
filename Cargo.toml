@@ -14,7 +14,6 @@ categories = ["rust-patterns", "no-std", "asynchronous"]
 [features]
 default = ["std"]
 std = []
-spectre = []
 
 [dev-dependencies]
 tokio = { version = "1.54.1", features = ["full"] }
