@@ -1,164 +1,151 @@
-# closed
+# `closed`
 
 [![Crates.io](https://img.shields.io/crates/v/closed.svg)](https://crates.io/crates/closed)
 [![Documentation](https://docs.rs/closed/badge.svg)](https://docs.rs/closed)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-Type-erased callable objects for Rust, modeled after C++'s
-`std::function`.
+> Type-erased callable objects for Rust, modeled after C++'s `std::function`.
 
-`closed` provides an owning, cloneable, type-erased callable,
-`Function<Args, Output>`, that can wrap any closure, function
-pointer, or user-defined callable. It occupies the same niche as
-`std::function<R(Args...)>` in C++: a value carrying a callable of
-a fixed signature, independent of the concrete type behind it.
+`closed` provides owning, type-erased wrappers around callables. It fills the
+same niche as `std::function` in C++: a value that carries a function of a
+specific signature, independent of its concrete type.
 
-```rust
-use closed::Function;
+The crate solves the "viral generics" problem. Instead of making your structs
+generic over `F: Fn(A) -> R` (which infects your entire codebase), or boxing
+them as `Box<dyn Fn(A) -> R>` (which loses `Clone` and makes async a nightmare),
+you can store a single concrete type.
 
-let f: Function<(i32, i32), i32> = Function::new(|a, b| a + b);
-assert_eq!(f.invoke((3, 4)), 7);
-```
+## Why
 
-## How it works
+Rust's `Fn` traits are excellent for generic code, but they cannot be easily
+stored in struct fields:
+*   `Box<dyn Fn(A) -> R>` is not `Clone`.
+*   `Box<dyn Fn(A) -> R>` cannot easily represent asynchronous callables.
+*   Making your struct generic over `F` spreads like a virus through your API.
+*   Using a custom `Callable` trait for type erasure causes LLVM to spill
+    arguments to the stack during indirect calls.
 
-Two building blocks:
+`closed` solves this by using Rust's built-in `Fn` traits under the hood via a
+specialized tuple mapping. Because the final indirect call uses
+`extern "rust-call"`, LLVM keeps the arguments in CPU registers (no stack
+spilling).
 
-*   **`Callable<Args>`**: a trait with one method,
-    `invoke(&self, args) -> Output`. Implemented automatically for
-    every `Fn` closure and function pointer of arity up to 12, and
-    implementable manually for your own types.
-*   **`Function<Args, Output>`**: the type-erased wrapper.
-    Internally an
-    `Arc<dyn Callable<Args, Output = Output> + Send + Sync>`, so
-    cloning is a single atomic increment and the callable is
-    shared, not duplicated.
+## The Three Flavors
 
-`Args` is always a tuple, matching `std::ops::Fn`: `()`, `(A,)`,
-`(A, B)`, and so on. This yields a single `invoke(args)` method
-for every arity. The `Future<O>` alias names a boxed, `Send`,
-`'static` future, the canonical output type for async callables.
-The `Never` alias names the never type and is available on stable
-through an associated-type projection.
+Mirroring Rust's standard library, `closed` provides three distinct types:
+
+| `closed` | Standard Library | Clone | Invocation |
+| :--- | :--- | :--- | :--- |
+| `Callable` | `Fn` | Yes | `.invoke(args)` |
+| `CallableMut` | `FnMut` | No | `.invoke_mut(args)` |
+| `CallableOnce`| `FnOnce` | No | `.invoke_once(args)`|
+
+- **`Callable`** is thread-safe (`Send + Sync`) and cheaply cloneable.
+- **`CallableMut`** allows capturing mutable state.
+- **`CallableOnce`** consumes itself upon invocation.
 
 ## Examples
 
-### Free functions, closures, and custom types
+### Basic `Callable` (Fn)
 
 ```rust
-use closed::{Callable, Function};
+use closed::Callable;
 
-fn double(x: i32) -> i32 { x * 2 }
-let f = Function::new(double);
-assert_eq!(f.invoke((21,)), 42);
+let add: Callable<(i32, i32), i32> = Callable::new(|a, b| a + b);
 
-let n = 10;
-let g = Function::new(move |x: i32| x + n);
-assert_eq!(g.invoke((5,)), 15);
+// Invoke it.
+assert_eq!(add.invoke((3, 4)), 7);
 
-struct Triple;
-impl Callable<(i32,)> for Triple {
-    type Output = i32;
-    fn invoke(&self, (x,): (i32,)) -> i32 { x * 3 }
-}
-let h = Function::new(Triple);
-assert_eq!(h.invoke((2,)), 6);
+// Clone it (cheaply, via Arc).
+let add2 = add.clone();
+assert_eq!(add2.invoke((10, 20)), 30);
 ```
 
-### Wrapping a `Function` preserves its type
-
-As in C++, `Function::new(existing_function)` produces a value
-of the **same** type. No `Function<Function<...>>` nesting occurs.
+### `CallableMut` (FnMut)
 
 ```rust
-let f: Function<(i32,), i32> = Function::new(|x| x * 2);
-let g: Function<(i32,), i32> = Function::new(f);
-assert_eq!(g.invoke((21,)), 42);
+use closed::CallableMut;
+
+let mut count = 0;
+let mut counter: CallableMut<(), i32> = CallableMut::new(move || {
+    count += 1;
+    count
+});
+
+assert_eq!(counter.invoke_mut(()), 1);
+assert_eq!(counter.invoke_mut(()), 2);
 ```
 
-### Async callables
-
-There is no separate trait for async. An async callable is a
-`Callable` whose output is a `Future`. `Function::new_async`
-handles the boxing for you.
+### `CallableOnce` (FnOnce)
 
 ```rust
-use closed::{Function, Future};
+use closed::CallableOnce;
 
-let f = Function::<(), Future<i32>>::new_async(async || 42);
-let v: i32 = f.invoke(()).await;
-assert_eq!(v, 42);
+let message = String::from("hello");
+let consume: CallableOnce<(), String> = CallableOnce::new(move || message);
+
+// Consumes the closure and the captured String.
+assert_eq!(consume.invoke_once(()), "hello");
 ```
 
-### Macros for signatures
+### Asynchronous Callables
 
-The `Function!` and `Callable!` macros share the names of the
-struct and the trait respectively, and expand to the corresponding
-type or bound.
+There is no separate trait or type for `async`. An asynchronous callable is
+simply a callable whose output is a boxed `Future`. 
 
 ```rust
-use closed::{Callable, Function};
+use closed::{Callable, Future};
 
-fn sum<F: Callable!(i32, i32 -> i32)>(f: F) -> i32 {
-    f.invoke((40, 2))
-}
+let fetch_data: Callable<(u32,), Future<String>> = 
+    Callable::new_async(|id| async move {
+        // ... async work ...
+        format!("Data for {}", id)
+    });
 
-let add: Function!(i32, i32 -> i32) = Function::new(|a, b| a + b);
-assert_eq!(sum(add), 42);
+// Requires an async runtime (e.g., tokio)
+// let result = fetch_data.invoke((42,)).await;
 ```
 
-`Function!(A, B -> O)` expands to `Function<(A, B), O>`.
-`Callable!(A, B -> O)` expands to
-`Callable<(A, B), Output = O>`, valid in trait-bound,
-`impl Trait`, and `dyn` positions.
+## Argument tuple convention
 
-### Nightly call syntax
+As in `std::ops::Fn`, the `Args` parameter is always a **tuple** of the
+callable's arguments:
 
-On a nightly toolchain, `Function` implements `Fn`, `FnMut`, and
-`FnOnce`, so the standard call syntax works.
+| Callable shape | `Args` type |
+|---|---|
+| `Fn() -> O` | `()` |
+| `Fn(A) -> O` | `(A,)` |
+| `Fn(A, B) -> O` | `(A, B)` |
 
-```rust
-let f = Function::new(|a: i32, b: i32| a + b);
-assert_eq!(f(3, 4), 7);
-```
+This gives a single `.invoke(args)` signature for every arity. It also means
+that a unary callable is invoked as `f.invoke((x,))`, not `f.invoke(x)`. This is
+the same punctuation cost that `Fn` imposes on generic code.
 
-The toolchain is detected at build time via `rustversion`. No
-feature flag is needed and no configuration is required.
+## Features
+
+*   **Zero-cost type erasure.** No stack spilling of arguments.
+*   **`Clone` via `Arc`.** Cloning a `Callable` is a single atomic increment.
+*   **Async support.** `new_async` boxes any `impl Future` into
+    `Pin<Box<dyn Future + Send>>`.
+*   **Arity up to 12.** Matches the standard library's maximum tuple size.
+*   **`no_std` compatible.** Disable the `std` feature; `alloc` is required.
+*   **Stable Rust.** Works perfectly on stable (with optional nightly features
+    for the never type).
 
 ## `no_std`
 
-`closed` is `#![no_std]`-compatible when the default `std`
-feature is disabled. `alloc` is required.
+`closed` is `#![no_std]`-compatible when the default `std` feature is disabled.
+`alloc` is required.
 
 ```toml
-closed = { version = "0.0.1", default-features = false }
+closed = { version = "0.0.2", default-features = false }
 ```
-
-## What it doesn't do
-
-*   **No `FnMut`/`FnOnce` support on stable.** Only `Fn`
-    closures are covered by the automatic impls, because
-    `Function` invokes through `&self`. `FnMut` and `FnOnce` are
-    provided on nightly via the `fn_traits` feature.
-*   **No `target_type()` or `target<T>()`.** Unlike
-    `std::function`'s RTTI, `closed::Function` does not expose the
-    wrapped type. Add it yourself if you need it.
-*   **No automatic `Fn` implementation on stable.** Blanket
-    `impl<T: Callable> Fn for T` is not possible due to coherence
-    rules against the standard library's own `Fn` impls. The
-    nightly `Fn` impl therefore targets `Function` specifically.
-
-## Status
-
-Pre-1.0. The public API is intended to be stable in shape;
-details may shift in minor versions.
 
 ## MSRV
 
-Rust **1.85** (edition 2024).
+Rust **1.85** (Edition 2024).
 
 ## License
 
-Dual-licensed under
-[Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) or
+Dual-licensed under [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) or
 [MIT](https://opensource.org/licenses/MIT), at your option.

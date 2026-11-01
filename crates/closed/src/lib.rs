@@ -1,174 +1,72 @@
-//! Type-erased callable objects, modeled after C++'s `std::function`.
+//! Type-erased callable objects for Rust.
 //!
-//! [`Function<Args, Output>`] is an owning, cloneable, type-erased callable
-//! that can wrap any [`Fn`] closure, function pointer, or user-defined type
-//! implementing [`Callable`]. It occupies the same niche as
-//! `std::function<R(Args...)>` in C++.
+//! This crate provides owning, type-erased wrappers around callables,
+//! filling the same niche as C++'s `std::function`. It solves the
+//! "viral generics" problem: instead of making your structs generic
+//! over `F: Fn(...)`, you can store a concrete type like
+//! `Callable<(A, B), Output>`.
 //!
-//! # Overview
+//! The crate provides three main types, mirroring the standard library's
+//! `Fn` trait family:
 //!
-//! The crate is built around three types:
+//! - [`Callable`] maps to [`Fn`]. It is cloneable (backed by [`Arc`]) and
+//!   can be shared across threads.
+//! - [`CallableMut`] maps to [`FnMut`]. It requires `&mut self` to invoke
+//!   and is backed by [`Box`].
+//! - [`CallableOnce`] maps to [`FnOnce`]. It consumes `self` upon
+//!   invocation and is backed by [`Box`].
 //!
-//! - [`Callable`]: a trait describing a callable object. Implementations are
-//!   provided automatically for all `Fn` closures and function pointers via
-//!   blanket impls generated at compile time, and may be implemented manually
-//!   for user-defined types.
-//! - [`Function`]: the type-erased, owning wrapper. Internally an
-//!   `Arc<dyn Callable<...> + Send + Sync>`, giving `Clone` and
-//!   `Send + Sync` for free when the wrapped callable is `Send + Sync`.
-//! - [`Future`]: a convenience alias for boxed, `Send` futures, intended
-//!   as the [`Output`](Callable::Output) type for `async` callables.
+//! # Argument tuples
+//!
+//! Following the convention of [`core::ops::Fn`], the arguments are always
+//! represented as a tuple. A unary function takes `(A,)`, a binary takes
+//! `(A, B)`, and a nullary function takes `()`.
 //!
 //! # Example
 //!
 //! ```rust
-//! use closed::{Callable, Function};
+//! use closed::Callable;
 //!
-//! // Function pointers.
-//! fn double(x: i32) -> i32 { x * 2 }
-//! let f = Function::new(double);
-//! assert_eq!(f.invoke((21,)), 42);
+//! // Create a Callable from a closure.
+//! let add: Callable<(i32, i32), i32> = Callable::new(|a, b| a + b);
 //!
-//! // Closures with captures.
-//! let n = 10;
-//! let g = Function::new(move |x: i32| x + n);
-//! assert_eq!(g.invoke((5,)), 15);
+//! // Invoke it.
+//! assert_eq!(add.invoke((3, 4)), 7);
 //!
-//! // User-defined callables.
-//! struct Triple;
-//! impl Callable<(i32,)> for Triple {
-//!     type Output = i32;
-//!     fn invoke(&self, (x,): (i32,)) -> i32 { x * 3 }
-//! }
-//! let h = Function::new(Triple);
-//! assert_eq!(h.invoke((2,)), 6);
+//! // Clone it (shares the same underlying closure via Arc).
+//! let add2 = add.clone();
+//! assert_eq!(add2.invoke((10, 20)), 30);
 //! ```
 //!
-//! # Argument tuple convention
+//! # Asynchronous callables
 //!
-//! As in [`std::ops::Fn`], the `Args` parameter is a **tuple** of the
-//! callable's arguments. A nullary callable has `Args = ()`, a unary
-//! callable has `Args = (A,)`, a binary callable has `Args = (A, B)`, and
-//! so on.
+//! There is no separate trait for async closures. Instead, an async
+//! callable is just a [`Callable`] whose output is a boxed [`Future`].
 //!
-//! # Nightly features
+//! ```rust
+//! use closed::{Callable, Future};
 //!
-//! When the crate is compiled with a nightly toolchain, detected at build
-//! time via `rustversion` in `build.rs`, additional implementations of
-//! [`Fn`], [`FnMut`], and [`FnOnce`] are provided for [`Function`]. This
-//! enables calling `Function` instances with the standard call syntax
-//! (`f(1, 2)`) instead of the explicit `.invoke((1, 2))` form.
-//!
-//! ```rust,ignore
-//! // Requires nightly.
-//! let f = Function::new(|a: i32, b: i32| a + b);
-//! assert_eq!(f(3, 4), 7);
+//! let f: Callable<(), Future<i32>> = Callable::new_async(async || 42);
+//! // let v = f.invoke(()).await; // requires an async runtime
 //! ```
 //!
-//! # `no_std`
+//! # `no_std` support
 //!
-//! The crate is `#![no_std]`-compatible when the `std` feature is disabled.
-//! It requires the `alloc` crate for `Arc` and `Box`.
+//! This crate is `#![no_std]` compatible. Disable the default `std`
+//! feature in your `Cargo.toml`. The `alloc` crate is required.
 
 #![cfg_attr(not(feature = "std"), no_std)]
-#![cfg_attr(nightly, feature(fn_traits, unboxed_closures, tuple_trait))]
+#![warn(missing_docs)]
 
 extern crate alloc;
-extern crate self as closed;
 
-#[cfg(nightly)]
-mod nightly_impls;
-mod stdfn;
+pub mod stdfn;
 pub mod traits;
 pub mod types;
 
-pub use closed_proc_macros::{callable as Callable, function as Function};
-pub use traits::Callable;
-pub use types::{Function, Future, Never};
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn free_fn(x: i32) -> i32 {
-        x * 2
-    }
-    struct Doubler;
-    impl Callable<(i32,)> for Doubler {
-        type Output = i32;
-        fn invoke(&self, (x,): (i32,)) -> i32 {
-            x * 2
-        }
-    }
-
-    #[test]
-    fn free_function() {
-        let f = Function::new(free_fn);
-        assert_eq!(f.invoke((21,)), 42);
-    }
-
-    #[test]
-    fn capturing_closure() {
-        let n = 10;
-        let f = Function::new(move |x: i32| x + n);
-        assert_eq!(f.invoke((5,)), 15);
-    }
-
-    #[test]
-    fn custom_callable() {
-        let f = Function::new(Doubler);
-        assert_eq!(f.invoke((4,)), 8);
-    }
-
-    #[test]
-    fn function_of_function_is_idempotent() {
-        let f: Function<(i32,), i32> = Function::new(free_fn);
-        let g: Function<(i32,), i32> = Function::new(f.clone());
-        assert_eq!(f.invoke((3,)), g.invoke((3,)));
-    }
-
-    #[test]
-    fn clone_shares_state() {
-        let f = Function::new(|x: i32| x + 1);
-        let g = f.clone();
-        assert_eq!(f.invoke((1,)), g.invoke((1,)));
-    }
-
-    #[tokio::test]
-    async fn async_closure() {
-        let f = Function::<(), Future<i32>>::new_async(async || 42);
-        assert_eq!(f.invoke(()).await, 42);
-    }
-
-    #[cfg(nightly)]
-    #[test]
-    fn nightly_call_syntax() {
-        let f = Function::new(|x: i32| x + 1);
-        assert_eq!(f(1), 2);
-
-        let g = Function::new(|a: i32, b: i32| a + b);
-        assert_eq!(g(3, 4), 7);
-
-        let h = Function::new(|| 42);
-        assert_eq!(h(), 42);
-    }
-
-    #[test]
-    fn function_macro() {
-        let f: Function!(i32 -> i32) = Function::new(|x: i32| x + 1);
-        assert_eq!(f.invoke((41,)), 42);
-    }
-
-    #[test]
-    fn function_macro_nullary() {
-        let f: Function!(-> i32) = Function::new(|| 42);
-        assert_eq!(f.invoke(()), 42);
-    }
-
-    #[test]
-    fn function_macro_binary() {
-        let f: Function!(i32, i32 -> i32) =
-            Function::new(|a: i32, b: i32| a + b);
-        assert_eq!(f.invoke((3, 4)), 7);
-    }
-}
+pub use traits::{
+    CallableArgs, IntoAsyncCallable, IntoAsyncCallableMut,
+    IntoAsyncCallableOnce, IntoCallable, IntoCallableMut, IntoCallableOnce,
+    ProjectOutput,
+};
+pub use types::{Callable, CallableMut, CallableOnce, Future, Never};

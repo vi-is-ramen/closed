@@ -1,6 +1,6 @@
 [package]
 name = "closed"
-version = "0.0.2-1"
+version = "0.0.2-2"
 edition = "2024"
 rust-version = "1.85"
 description = "Type-erased callable objects for Rust"
@@ -23,6 +23,3 @@ std = []
 
 [dev-dependencies]
 tokio = { version = "1.54.1", features = ["full"] }
-
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(nightly)'] }
