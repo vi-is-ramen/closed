@@ -4,158 +4,127 @@
 [![Documentation](https://docs.rs/closed/badge.svg)](https://docs.rs/closed)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-> Type-erased callable objects for Rust, modeled after C++'s `std::function`.
+> Type-erased callable objects for Rust. Modeled after C++'s `std::function`,
+> with HRTB, async, and `no_std` support.
 
-`closed` provides owning, type-erased wrappers around callables. It fills the
-same niche as `std::function` in C++: a value that carries a function of a
-specific signature, independent of its concrete type.
+Storing a closure in a struct field is painful in Rust. Either your struct
+becomes generic over `F: Fn(A) -> R` (and now `F` spreads through your entire
+API), or you reach for `Box<dyn Fn>` (and lose `Clone`, async, and HRTB).
 
-The crate solves the "viral generics" problem. Instead of making your structs
-generic over `F: Fn(A) -> R` (which infects your entire codebase), or boxing
-them as `Box<dyn Fn(A) -> R>` (which loses `Clone` and makes async a nightmare),
-you can store a single concrete type.
+`closed` fixes that. Every callable becomes a concrete type — no generics
+leaking, no `for<'a, 'b>` boilerplate, no manual `Box::pin`.
 
-## Why
+## Before / after
 
-Rust's `Fn` traits are excellent for generic code, but they cannot be easily
-stored in struct fields:
-*   `Box<dyn Fn(A) -> R>` is not `Clone`.
-*   `Box<dyn Fn(A) -> R>` cannot easily represent asynchronous callables.
-*   Making your struct generic over `F` spreads like a virus through your API.
-*   Using a custom (without `extern "rust-call"` \*) `Callable` trait for type
-    erasure forces \*\*\* LLVM to spill arguments to the stack during indirect
-    calls.
-
-`closed` solves this by using Rust's built-in `Fn` traits under the hood via a
-specialized tuple mapping. Because the final indirect call uses
-`extern "rust-call"`, LLVM keeps the arguments in CPU registers (no stack
-spilling) when possible. This way, `Callable` is zero-cost abstraction.
-
-## The Three Flavors
-
-Mirroring Rust's standard library, `closed` provides three distinct types:
-
-| `closed` | Standard Library | Clone | Invocation |
-| :--- | :--- | :--- | :--- |
-| `Callable` | `Fn` | Yes | `.invoke((arg1, arg2))` / `.call(arg1, arg2)` |
-| `CallableMut` | `FnMut` | No | `.invoke_mut((arg1, arg2))` / `.call_mut(arg1, arg2)` |
-| `CallableOnce`| `FnOnce` | No | `.invoke_once((arg1, arg2))` / `.call_once(arg1, arg2)` |
-
-- **`Callable`** is thread-safe (`Send + Sync`) and cheaply cloneable.
-- **`CallableMut`** allows capturing mutable state.
-- **`CallableOnce`** consumes itself upon invocation.
-
-## Examples
-
-### Basic `Callable` (Fn)
+### Sync + `Clone`
 
 ```rust
-use closed::Callable;
+// Without closed.
+struct S {
+    cb: Arc<dyn Fn(i32) -> i32 + Send + Sync>,
+}
 
-let add: Callable<(i32, i32), i32> = Callable::new(|a, b| a + b);
-
-// Invoke it.
-assert_eq!(add.invoke((3, 4)), 7);
-
-// Clone it (cheaply, via Arc).
-let add2 = add.clone();
-assert_eq!(add2.invoke((10, 20)), 30);
+// With closed.
+struct S {
+    cb: Func<(i32,), i32>,
+}
 ```
 
-### `CallableMut` (FnMut)
+### HRTB (borrowed arguments)
 
 ```rust
-use closed::CallableMut;
+// Without closed — `for<'a, 'b>` is easy to get wrong.
+let cb: Arc<dyn for<'a, 'b> Fn(&'a Event, &'b mut World) + Send + Sync>
+    = Arc::new(|e, w| { /* ... */ });
 
+// With closed — write the types, get the bounds.
+let cb: func!(&Event, &mut World) = (|e, w| { /* ... */ }).into();
+```
+
+### Async
+
+```rust
+// Without closed.
+let cb:
+    Arc<dyn Fn(u32) -> Pin<Box<dyn Future<Output = String> + Send>> + Send + Sync>
+    = Arc::new(|id| Box::pin(async move { format!("{id}") }));
+
+// With closed.
+let cb: func!(u32 -> String; async) = (|id| promise! { format!("{id}") }).into();
+```
+
+## The three flavors
+
+Mirroring Rust's `Fn` family:
+
+| `closed` | Standard library | `Clone` | Invocation |
+|---|---|---|---|
+| `Func<(A, B), O>` | `Fn(A, B) -> O` | Yes | `.invoke((a, b))` |
+| `FuncMut<(A, B), O>` | `FnMut(A, B) -> O` | No | `.invoke_mut((a, b))` |
+| `FuncOnce<(A, B), O>` | `FnOnce(A, B) -> O` | No | `.invoke_once((a, b))` |
+
+Each has a `*Ref<'a>` twin (`FuncRef<'a, ...>`) for capturing borrowed data.
+
+## Features
+
+- **`Clone` via `Arc`.** Cloning a `Func` is one atomic increment.
+- **HRTB by default.** `func!(&str -> usize)` expands to
+  `Func<Lend<(Ref<str>,)>, usize>` — i.e.
+  `Arc<dyn for<'a> Fn(&'a str) -> usize + Send + Sync>`.
+- **Async built in.** `func!(u32 -> String; async)` boxes the returned
+  future for you. `promise!` wraps any block into a `PromisePin`.
+- **Mixed owned + borrowed.** `func!(String, &str -> String)` works.
+- **`no_std` compatible.** Disable the `std` feature; `alloc` is required.
+- **Safe.** `#![forbid(unsafe_code)]`.
+- **Stable Rust.** No nightly features.
+- **Arity up to 8.**
+
+## Example
+
+```rust
+use closed::{func, promise};
+
+// Sync, owned.
+let add: func!(i32, i32 -> i32) = (|a, b| a + b).into();
+assert_eq!(add.invoke((3, 4)), 7);
+
+// HRTB, borrowed.
+let join: func!(&_, &_ -> String) = (|a: &str, b: &str| format!("{a}{b}")).into();
+
+assert_eq!(join.invoke(("hello", "world")), "helloworld");
+
+// Async.
+let double: func!(u32 -> u32; async) = (|x| promise! { x * 2 }).into();
+// double.invoke((21,)).await == 42
+
+// Mutable state.
 let mut count = 0;
-let mut counter: CallableMut<(), i32> = CallableMut::new(move || {
-    count += 1;
-    count
-});
+let mut counter: func!(-> i32; mut) = (move || { count += 1; count }).into();
 
 assert_eq!(counter.invoke_mut(()), 1);
 assert_eq!(counter.invoke_mut(()), 2);
 ```
 
-### `CallableOnce` (FnOnce)
+## When *not* to use `closed`
 
-```rust
-use closed::CallableOnce;
+If you have one or two owned closures and don't need `Clone` or async,
+`Arc<dyn Fn>` is simpler and dependency-free. `closed` pays off when:
 
-let message = String::from("hello");
-let consume: CallableOnce<(), String> = CallableOnce::new(move || message);
+- you need HRTB (`&Event`, `&mut World`) **and** `Clone`,
+- you need async callables stored in structs,
+- you have three or more callable fields and want a uniform API,
+- you're in `no_std + alloc`.
 
-// Consumes the closure and the captured String.
-assert_eq!(consume.invoke_once(()), "hello");
-```
+## Documentation
 
-### Asynchronous Callables
-
-There is no separate trait or type for `async`. An asynchronous callable is
-simply a callable whose output is a boxed `Future`. 
-
-```rust
-use closed::{Callable, Future};
-
-let fetch_data: Callable<(u32,), Future<String>> = 
-    Callable::new_async(|id| async move {
-        // ... async work ...
-        format!("Data for {}", id)
-    });
-
-// Requires an async runtime (e.g., tokio)
-// let result = fetch_data.invoke((42,)).await;
-```
-
-## Argument tuple convention
-
-As in `std::ops::Fn`, the `Args` parameter is always a **tuple** of the
-callable's arguments:
-
-| Callable shape | `Args` type |
-|---|---|
-| `Fn() -> O` | `()` |
-| `Fn(A) -> O` | `(A,)` |
-| `Fn(A, B) -> O` | `(A, B)` |
-
-This gives a single `.invoke(args)` signature for every arity. It also means
-that a unary callable is invoked as `f.invoke((x,))`, not `f.invoke(x)`. This is
-the same punctuation cost that `Fn` imposes on generic code.
-
-## Features
-
-*   **Zero-cost type erasure.** Absolute performance parity with manual
-    `Box/Arc<dyn Fn...>`.
-*   **`Clone` via `Arc`.** Cloning a `Callable` is a single atomic increment.
-*   **Async support.** `new_async` boxes any `impl Future` into
-    `Pin<Box<dyn Future + Send>>`.
-*   **Arity up to 12.** Matches the standard library's maximum tuple size.
-*   **`no_std` compatible.** Disable the `std` feature; `alloc` is required.
-*   **Stable Rust.** Works perfectly on stable (with optional nightly features
-    for the never type).
-
-## `no_std`
-
-`closed` is `#![no_std]`-compatible when the default `std` feature is disabled.
-`alloc` is required.
-
-```toml
-closed = { version = "0.0.2", default-features = false }
-```
+- API: <https://docs.rs/closed>
+- Tests: [`crates/closed/tests/`](https://github.com/vi-is-ramen/closed/tree/main/crates/closed/tests)
 
 ## MSRV
 
-Rust **1.85** (Edition 2024).
+Rust **1.88** (Edition 2024).
 
 ## License
 
-Dual-licensed under [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) or
-[MIT](https://opensource.org/licenses/MIT), at your option.
-
----
-
-\* `rust-call` available on nightly channel only. `closed` never writes
-`extern "rust-call"` explicitly — it uses `dyn Fn(...)`, whose calls the
-compiler lowers to rust-call ABI internally. That lowering is stable.
-
-\*\*\* Checked with [Godbolt](https://godbolt.org/z/Ed7zbvGvf).
+Dual-licensed under [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0)
+or [MIT](https://opensource.org/licenses/MIT), at your option.

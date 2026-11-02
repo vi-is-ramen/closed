@@ -1,0 +1,19 @@
+[package]
+name = "closed-proc-macros"
+version = { workspace = true }
+edition = "2024"
+rust-version = "1.88"
+description = "Closed crate procedure macros. Not for independent use."
+license = "MIT OR Apache-2.0"
+authors = ["Ivan Chetchasov <vi.is.chapmann@gmail.com"]
+repository = "https://github.com/vi-is-ramen/closed"
+homepage = "https://github.com/vi-is-ramen/closed"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "3", features = ["full"] }
+proc-macro2 = { version = "1" }
+quote = { version = "1" }
+proc-macro-crate = { version = "3" }

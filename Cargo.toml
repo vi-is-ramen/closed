@@ -1,24 +1,9 @@
-[package]
-name = "closed"
-version = "0.0.3"
-edition = "2024"
-rust-version = "1.85"
-description = "Type-erased callable objects for Rust"
-license = "MIT OR Apache-2.0"
-authors = ["Ivan Chetchasov <vi.is.chapmann@gmail.com"]
-repository = "https://github.com/vi-is-ramen/suv"
-homepage = "https://github.com/vi-is-ramen/suv"
-keywords = ["callable", "function", "type-erasure", "std-function", "closure"]
-categories = ["rust-patterns", "no-std", "asynchronous"]
+[workspace]
+resolver = "3"
+members = ["crates/closed", "crates/macros"]
 
-[features]
-default = ["std"]
-std = []
+[workspace.package]
+version = "0.1.0"
 
-[dev-dependencies]
-tokio = { version = "1.54.1", features = ["full"] }
-criterion = { version = "0.8.2" }
-
-[[bench]]
-name = "callable_bench"
-harness = false
+[workspace.dependencies]
+closed-proc-macros = { package = "closed-proc-macros", path = "crates/macros", version = "=0.1.0" }
