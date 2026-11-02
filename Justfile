@@ -51,4 +51,7 @@ pub:
 	@cargo publish -p closed-proc-macros
 	@cargo publish -p closed
 
+expand:
+	@cargo expand -p closed > expand.rs
+
 verify: check test dry-pub
